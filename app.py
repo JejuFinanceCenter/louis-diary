@@ -31,6 +31,7 @@ INK = "#3A3A3A"
 COURSES = ["낙조길", "월성사", "보라매 공원"]
 
 def _load_api_key() -> str:
+    """1순위: 환경변수, 2순위: st.secrets. 둘 다 없으면 빈 문자열."""
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if key:
         return key
@@ -41,7 +42,6 @@ def _load_api_key() -> str:
 
 
 ANTHROPIC_API_KEY = _load_api_key()
-DEMO_MODE = ANTHROPIC_API_KEY == ""
 
 st.set_page_config(
     page_title="효영의 다이어트 일기",
@@ -56,6 +56,15 @@ st.markdown(
     <style>
         .stApp {{
             background: linear-gradient(180deg, #FFF6EE 0%, #F2F8FF 100%);
+        }}
+        /* 한글 어절 단위 줄바꿈 — "효영의/다이어트 일기" 처럼 단어 가운데 끊기지 않게 */
+        .stApp, .stApp p, .stApp h1, .stApp h2, .stApp h3, .stApp h4,
+        .stApp span, .stApp label, .stApp div,
+        .louis-hero, .louis-hero h1, .louis-hero h2, .louis-hero .caption,
+        .stat-card, .stat-card .label, .stat-card .value, .louis-bubble {{
+            word-break: keep-all;
+            overflow-wrap: break-word;
+            line-break: strict;
         }}
         h1, h2, h3 {{ color: {INK}; }}
         .louis-hero {{
@@ -333,70 +342,114 @@ def louis_says(msg: str, cool: bool = False) -> None:
 # ─────────────────────────────────────────────────────────────
 # Anthropic Vision (식단 분석)
 # ─────────────────────────────────────────────────────────────
+def _detect_image_media_type(image_bytes: bytes) -> str:
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith(b"GIF8"):
+        return "image/gif"
+    if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"  # 기본 — JPEG/JFIF 등
+
+
 def analyze_food_image(image_bytes: bytes) -> dict:
-    """이미지를 Anthropic Vision으로 분석. 데모 모드면 mock 반환."""
-    if DEMO_MODE:
-        # 한식 데모 응답
+    """이미지를 Anthropic Vision(claude-opus-4-5)으로 분석.
+
+    절대 가짜 폴백 응답을 만들지 않음. 키 누락/네트워크 실패/파싱 실패는
+    모두 정직한 error dict 로 반환. 음식이 아닌 사진은 not_food dict 로 반환.
+    """
+    if not ANTHROPIC_API_KEY:
         return {
-            "demo": True,
-            "dish": "비빔밥 (예시 분석)",
-            "items": ["현미밥", "나물 모듬", "달걀 후라이", "고추장", "참기름"],
-            "calories": 580,
-            "protein_g": 21,
-            "carbs_g": 88,
-            "fat_g": 14,
-            "comment": "탄수화물이 다소 높지만 채소가 풍부해요. 단백질을 +10g 정도 더 추가하면 균형이 좋아져요. 다음 끼니에 두부나 달걀을 곁들여보세요.",
+            "error": (
+                "❌ ANTHROPIC_API_KEY 가 설정되지 않았습니다.\n\n"
+                "**Streamlit Cloud**: App settings → **Secrets** 박스에 다음 한 줄을 추가하고, "
+                "App 페이지 우측 상단 메뉴에서 **Reboot app** 을 눌러주세요.\n\n"
+                "```toml\nANTHROPIC_API_KEY = \"sk-ant-...\"\n```\n\n"
+                "**로컬**: `.streamlit/secrets.toml` 또는 환경변수에 `ANTHROPIC_API_KEY` 를 넣어주세요."
+            )
         }
 
     try:
         import anthropic
-    except ImportError:
-        return {"error": "anthropic 패키지가 설치되지 않았습니다."}
+    except ImportError as e:
+        return {"error": f"❌ anthropic 패키지 미설치: {e}. requirements.txt 확인 필요."}
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+    media_type = _detect_image_media_type(image_bytes)
 
     prompt = (
-        "이 한식 사진을 분석해서 JSON으로만 답해주세요. 형식:\n"
+        "이 사진을 분석해서 **JSON 한 객체만** 출력하세요. 코드블록 마커(```)도 쓰지 마세요.\n\n"
+        "한식·양식·일식·중식·디저트·음료 등 어떤 음식이든 인식 가능합니다. "
+        "여러 음식이 한 접시에 있으면 가장 비중이 큰 메뉴 이름으로 부르고 items 에 모두 나열하세요.\n\n"
+        "**음식이 명확한 경우** 아래 형식으로:\n"
         "{\n"
-        '  "dish": "음식 이름",\n'
-        '  "items": ["구성 재료1", "재료2", ...],\n'
-        '  "calories": 추정 kcal (정수),\n'
+        '  "is_food": true,\n'
+        '  "dish": "음식 이름 (한국어로)",\n'
+        '  "items": ["주요 재료/구성 요소", ...],\n'
+        '  "calories": 1인분 추정 kcal (정수),\n'
         '  "protein_g": 단백질 g (정수),\n'
         '  "carbs_g": 탄수화물 g (정수),\n'
         '  "fat_g": 지방 g (정수),\n'
-        '  "comment": "다이어트/근손실 방지 관점의 따뜻한 한 줄 코멘트"\n'
+        '  "confidence": "high" | "medium" | "low",\n'
+        '  "comment": "다이어트와 근손실 방지 관점의 따뜻한 한 줄 코멘트(한국어). 칼로리는 사진 기반 추정이라 실제와 ±20% 정도 오차가 있을 수 있다는 점을 자연스럽게 언급할 것."\n'
+        "}\n\n"
+        "**음식이 아니거나 음식인지 불명확한 경우** (영수증, 풍경, 사람, 빈 그릇, 비음식 물체 등). "
+        "추측하지 말고 정직하게 아래 형식으로:\n"
+        "{\n"
+        '  "is_food": false,\n'
+        '  "reason": "음식이 아닌 것 같아요. 보이는 것은 ___ 입니다. 식사 사진을 올려주세요."\n'
         "}\n"
-        "JSON 외 다른 텍스트는 절대 포함하지 마세요."
     )
 
     try:
         msg = client.messages.create(
-            model="claude-opus-4-7",
-            max_tokens=600,
+            model="claude-opus-4-5",
+            max_tokens=800,
             messages=[
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "image",
-                            "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
+                            "source": {"type": "base64", "media_type": media_type, "data": b64},
                         },
                         {"type": "text", "text": prompt},
                     ],
                 }
             ],
         )
-        text = msg.content[0].text.strip()
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        data = json.loads(text.strip())
-        data["demo"] = False
-        return data
     except Exception as e:
-        return {"error": f"분석 실패: {e}"}
+        return {"error": f"❌ Vision API 호출 실패\n\n`{type(e).__name__}`: {e}"}
+
+    raw = msg.content[0].text.strip() if msg.content else ""
+    text = raw
+    # 모델이 코드블록을 씌운 경우 벗기기
+    if text.startswith("```"):
+        parts = text.split("```")
+        if len(parts) >= 2:
+            text = parts[1]
+            if text.lstrip().lower().startswith("json"):
+                text = text.split("\n", 1)[1] if "\n" in text else ""
+    text = text.strip()
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        return {
+            "error": (
+                f"❌ Vision 응답을 JSON 으로 파싱하지 못했습니다.\n\n"
+                f"`{e}`\n\n응답 미리보기:\n```\n{raw[:400]}\n```"
+            )
+        }
+
+    if data.get("is_food") is False:
+        return {
+            "not_food": True,
+            "reason": data.get("reason") or "음식이 아닌 것 같아요. 식사 사진을 올려주세요.",
+        }
+
+    return data
 
 
 # ─────────────────────────────────────────────────────────────
@@ -416,21 +469,11 @@ with st.sidebar:
     for c in COURSES:
         st.write(f"• {c}")
 
-    st.divider()
-    if DEMO_MODE:
-        st.info("🧪 데모 모드\n\n`ANTHROPIC_API_KEY` 환경변수를 설정하면 실제 Vision 분석이 활성화돼요.")
-    else:
-        st.success("✅ Vision 분석 활성화")
-
-    st.divider()
-    if sheets_ok():
-        st.success("☁️ Google Sheets 연결됨\n\n입력 즉시 영구 저장됩니다.")
-    else:
-        reason = st.session_state.get("sheets_status", "unknown")
-        if reason == "no_config":
-            st.info("💾 로컬 모드\n\nGoogle Sheets 연동을 설정하면 데이터가 영구 저장돼요. README 참고.")
-        else:
-            st.warning(f"⚠️ 시트 연결 실패\n\n로컬 세션에만 저장 중. 사유: `{reason}`")
+    # 시트 연결 실패한 경우만 표시 (정상 동작이나 미설정 안내는 노이즈라 제거)
+    sheets_status = st.session_state.get("sheets_status", "")
+    if sheets_status not in ("", "no_config"):
+        st.divider()
+        st.warning(f"⚠️ 시트 연결 실패\n\n로컬 세션에만 저장 중.\n사유: `{sheets_status}`")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -586,11 +629,6 @@ with tab1:
 # ── 탭 2: 식단 분석 ─────────────────────────────────────────
 with tab2:
     st.markdown("### 📷 식단 사진 분석")
-    if DEMO_MODE:
-        st.warning(
-            "🧪 **데모 모드** — 실제 API 호출 없이 예시 결과를 보여드려요. "
-            "`ANTHROPIC_API_KEY` 환경변수를 설정하면 진짜 분석이 켜져요."
-        )
 
     uploaded = st.file_uploader(
         "한 끼 식사 사진을 올려주세요 (jpg/png)",
@@ -611,11 +649,15 @@ with tab2:
 
             if "error" in result:
                 st.error(result["error"])
+            elif result.get("not_food"):
+                st.info(f"🤔 {result['reason']}")
             else:
-                if result.get("demo"):
-                    st.info("🧪 데모 응답")
                 st.markdown(f"#### 🍽️ {result['dish']}")
                 st.write("**구성:** " + ", ".join(result["items"]))
+
+                conf = result.get("confidence", "medium")
+                conf_label = {"high": "🟢 높음", "medium": "🟡 보통", "low": "🔴 낮음"}.get(conf, "🟡 보통")
+                st.caption(f"분석 신뢰도: {conf_label} · 칼로리는 사진 기반 추정치라 ±20% 오차가 있을 수 있어요")
 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("칼로리", f"{result['calories']} kcal")
