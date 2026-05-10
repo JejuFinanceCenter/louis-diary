@@ -1,6 +1,6 @@
 """
-루이와 함께하는 다이어트 다이어리
-제주 한경면 낙조길 · Streamlit App
+효영의 다이어트 일기
+제주 낙조길 · 스위티와 루이와 함께 · Streamlit App
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ ANTHROPIC_API_KEY = _load_api_key()
 DEMO_MODE = ANTHROPIC_API_KEY == ""
 
 st.set_page_config(
-    page_title="루이와 함께하는 다이어트 다이어리",
+    page_title="효영의 다이어트 일기",
     page_icon="🌅",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -65,17 +65,29 @@ st.markdown(
             color: white;
             box-shadow: 0 8px 24px rgba(255, 140, 66, 0.18);
             margin-bottom: 18px;
+            text-align: center;
         }}
         .louis-hero h1 {{
             color: white;
             margin: 0;
-            font-size: 1.9rem;
-            line-height: 1.35;
+            font-size: 2.1rem;
+            font-weight: 700;
+            line-height: 1.3;
+            letter-spacing: -0.01em;
         }}
-        .louis-hero p {{
-            color: rgba(255,255,255,0.92);
-            margin: 8px 0 0 0;
-            font-size: 0.98rem;
+        .louis-hero h2 {{
+            color: rgba(255,255,255,0.96);
+            margin: 12px 0 0 0;
+            font-size: 1.2rem;
+            font-weight: 500;
+            line-height: 1.45;
+        }}
+        .louis-hero .caption {{
+            color: white;
+            opacity: 0.85;
+            font-size: 0.85rem;
+            margin: 10px 0 0 0;
+            letter-spacing: 0.02em;
         }}
         .stat-card {{
             background: white;
@@ -304,8 +316,9 @@ def hero_header() -> None:
     st.markdown(
         """
         <div class="louis-hero">
-            <h1>🌅 오늘도 루이와 함께 즐겁게 걸어볼까요?</h1>
-            <p>제주 한경면 낙조길 · 천천히, 꾸준히, 즐겁게</p>
+            <h1>🌅 효영의 다이어트 일기</h1>
+            <h2>오늘도 스위티와 함께 즐겁게 다이어트해 볼까요?</h2>
+            <p class="caption">제주 낙조길 · 루이와 천천히, 꾸준히, 즐겁게</p>
         </div>
         """,
         unsafe_allow_html=True,
