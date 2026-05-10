@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# Streamlit secrets — NEVER commit real keys
+.streamlit/secrets.toml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
+
+# Claude Code local session state
+.claude/
+
+# Build / dist
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Logs / runtime
+*.log
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local data uploads (사진 업로드 캐시 등)
+uploads/
+*.jpg.tmp
