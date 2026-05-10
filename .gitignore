@@ -14,6 +14,11 @@ ENV/
 # Streamlit secrets — NEVER commit real keys
 .streamlit/secrets.toml
 
+# Service account / API JSON keys (GCP, etc.)
+*-credentials.json
+*-service-account*.json
+*.iam.gserviceaccount.com.json
+
 # OS / editor
 .DS_Store
 Thumbs.db

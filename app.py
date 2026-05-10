@@ -17,6 +17,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from PIL import Image
 
+import sheets
+
 # ─────────────────────────────────────────────────────────────
 # 설정 & 테마
 # ─────────────────────────────────────────────────────────────
@@ -152,6 +154,24 @@ def _seed_demo_exercise() -> list[dict]:
     return rows
 
 
+def _try_load_from_sheets() -> tuple[dict, str]:
+    """시트에서 데이터 로드 시도. (data_dict, status_message) 반환.
+    status가 빈 문자열이면 성공, 아니면 폴백 사유."""
+    if not sheets.is_configured():
+        return ({}, "no_config")
+    try:
+        return (
+            {
+                "weights": sheets.load_weights(),
+                "meals": sheets.load_meals(),
+                "exercises": sheets.load_exercises(),
+            },
+            "",
+        )
+    except Exception as e:
+        return ({}, f"connect_failed: {type(e).__name__}: {e}")
+
+
 def init_state() -> None:
     if "profile" not in st.session_state:
         st.session_state.profile = {
@@ -162,28 +182,64 @@ def init_state() -> None:
             "goal_kg": 50.0,
             "preference": "한식",
         }
-    if "weights" not in st.session_state:
-        random.seed(42)
-        st.session_state.weights = _seed_demo_weights()
-    if "meals" not in st.session_state:
-        # 오늘 한 끼 정도 시드
-        st.session_state.meals = [
-            {
-                "datetime": datetime.now() - timedelta(hours=5),
-                "name": "현미밥 + 된장찌개 + 시금치나물",
-                "calories": 520,
-                "protein_g": 22,
-                "carbs_g": 78,
-                "fat_g": 12,
-                "note": "데모 시드",
-            }
-        ]
-    if "exercises" not in st.session_state:
-        random.seed(7)
-        st.session_state.exercises = _seed_demo_exercise()
+
+    # 시트 1회 로드 시도 (전체 세션에 1번)
+    if "sheets_status" not in st.session_state:
+        loaded, status = _try_load_from_sheets()
+        st.session_state.sheets_status = status  # ""=ok, 그 외 사유
+
+        if status == "":
+            # 성공: 시트 데이터로 채우기, 비어있으면 시드
+            random.seed(42)
+            st.session_state.weights = loaded["weights"] or _seed_demo_weights()
+            st.session_state.meals = loaded["meals"] or [
+                {
+                    "datetime": datetime.now() - timedelta(hours=5),
+                    "name": "현미밥 + 된장찌개 + 시금치나물",
+                    "calories": 520,
+                    "protein_g": 22,
+                    "carbs_g": 78,
+                    "fat_g": 12,
+                    "note": "데모 시드",
+                }
+            ]
+            random.seed(7)
+            st.session_state.exercises = loaded["exercises"] or _seed_demo_exercise()
+        else:
+            # 폴백: 데모 시드
+            random.seed(42)
+            st.session_state.weights = _seed_demo_weights()
+            st.session_state.meals = [
+                {
+                    "datetime": datetime.now() - timedelta(hours=5),
+                    "name": "현미밥 + 된장찌개 + 시금치나물",
+                    "calories": 520,
+                    "protein_g": 22,
+                    "carbs_g": 78,
+                    "fat_g": 12,
+                    "note": "데모 시드",
+                }
+            ]
+            random.seed(7)
+            st.session_state.exercises = _seed_demo_exercise()
 
 
 init_state()
+
+
+def sheets_ok() -> bool:
+    return st.session_state.get("sheets_status") == ""
+
+
+def try_persist(label: str, fn, *args, **kwargs) -> None:
+    """시트 저장 시도. 실패하면 토스트만 띄우고 조용히 넘어감."""
+    if not sheets_ok():
+        return
+    try:
+        fn(*args, **kwargs)
+    except Exception as e:
+        st.toast(f"📋 시트 저장 실패 ({label}) — 이번 세션에만 보관됩니다", icon="⚠️")
+        st.session_state.sheets_status = f"write_failed: {type(e).__name__}"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -352,6 +408,16 @@ with st.sidebar:
         st.info("🧪 데모 모드\n\n`ANTHROPIC_API_KEY` 환경변수를 설정하면 실제 Vision 분석이 활성화돼요.")
     else:
         st.success("✅ Vision 분석 활성화")
+
+    st.divider()
+    if sheets_ok():
+        st.success("☁️ Google Sheets 연결됨\n\n입력 즉시 영구 저장됩니다.")
+    else:
+        reason = st.session_state.get("sheets_status", "unknown")
+        if reason == "no_config":
+            st.info("💾 로컬 모드\n\nGoogle Sheets 연동을 설정하면 데이터가 영구 저장돼요. README 참고.")
+        else:
+            st.warning(f"⚠️ 시트 연결 실패\n\n로컬 세션에만 저장 중. 사유: `{reason}`")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -547,17 +613,17 @@ with tab2:
                 louis_says(result["comment"], cool=True)
 
                 if st.button("💾 오늘 식사로 기록", type="primary"):
-                    st.session_state.meals.append(
-                        {
-                            "datetime": datetime.now(),
-                            "name": result["dish"],
-                            "calories": result["calories"],
-                            "protein_g": result["protein_g"],
-                            "carbs_g": result["carbs_g"],
-                            "fat_g": result["fat_g"],
-                            "note": "사진 분석",
-                        }
-                    )
+                    new_meal = {
+                        "datetime": datetime.now(),
+                        "name": result["dish"],
+                        "calories": result["calories"],
+                        "protein_g": result["protein_g"],
+                        "carbs_g": result["carbs_g"],
+                        "fat_g": result["fat_g"],
+                        "note": "사진 분석",
+                    }
+                    st.session_state.meals.append(new_meal)
+                    try_persist("식단", sheets.append_meal, new_meal)
                     st.success("기록했어요! 대시보드에서 확인해보세요.")
                     st.rerun()
     else:
@@ -622,6 +688,7 @@ with tab3:
                 st.session_state.weights.append({"date": new_date, "weight": new_weight})
             p = st.session_state.profile
             p["current_kg"] = new_weight
+            try_persist("체중", sheets.upsert_weight, new_date, new_weight)
             st.success(f"{new_date.strftime('%m월 %d일')} · {new_weight}kg 저장!")
             st.rerun()
 
@@ -661,14 +728,14 @@ with tab4:
         st.write("")
         st.write("")
         if st.button("기록", type="primary", width="stretch", key="ex_save"):
-            st.session_state.exercises.append(
-                {
-                    "date": ex_date,
-                    "course": ex_course,
-                    "distance_km": ex_dist,
-                    "minutes": ex_min,
-                }
-            )
+            new_ex = {
+                "date": ex_date,
+                "course": ex_course,
+                "distance_km": ex_dist,
+                "minutes": ex_min,
+            }
+            st.session_state.exercises.append(new_ex)
+            try_persist("운동", sheets.append_exercise, new_ex)
             st.success(f"{ex_course} · {ex_dist}km · {ex_min}분 기록 완료!")
             st.rerun()
 
